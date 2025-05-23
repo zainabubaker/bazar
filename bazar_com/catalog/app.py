@@ -1,9 +1,12 @@
 from flask import Flask, request, jsonify
 import csv
+import os
+import requests
 
 app = Flask(__name__)
 
 DATA_FILE = 'catalog_data.csv'
+OTHER_REPLICA = os.getenv("OTHER_REPLICA", "")  # e.g., http://catalog2:5001
 
 def read_catalog():
     with open(DATA_FILE, newline='') as f:
@@ -48,9 +51,27 @@ def update(item_id):
 
     if updated:
         write_catalog(catalog)
+
+        # Invalidate frontend cache
+        try:
+            requests.post("http://frontend:5000/invalidate/{}".format(item_id))
+        except:
+            pass
+
+        # Forward update to other replica (if exists and not forwarded)
+        if not request.headers.get("X-Replica-Forwarded") and OTHER_REPLICA:
+            try:
+                requests.post(
+                    f"{OTHER_REPLICA}/update/{item_id}",
+                    json=update_data,
+                    headers={"X-Replica-Forwarded": "true"}
+                )
+            except:
+                pass
+
         return jsonify({"message": "Updated successfully"})
     else:
         return jsonify({"error": "Item not found"}), 404
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0",port=5001)
+    app.run(host="0.0.0.0", port=5001)
